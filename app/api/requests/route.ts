@@ -18,9 +18,9 @@ export async function GET(request: NextRequest) {
   if (role === "DEPT_USER") { where += " AND r.requested_by = ?"; params.push(userId); }
 
   if (status) { where += " AND r.status = ?"; params.push(status); }
-  if (q) { where += " AND (r.request_number LIKE ? OR r.asset_type LIKE ?)"; const qp = `%${q}%`; params.push(qp, qp); }
+  if (q) { where += " AND (r.request_number LIKE ? OR r.asset_type LIKE ? OR d.name LIKE ?)"; const qp = `%${q}%`; params.push(qp, qp, qp); }
 
-  const requests = db.prepare(`
+  const requests = await db.prepare(`
     SELECT r.*, d.name as department_name, u.name as requested_by_name
     FROM requests r
     LEFT JOIN departments d ON r.department_id = d.id
@@ -28,6 +28,10 @@ export async function GET(request: NextRequest) {
     ${where} ORDER BY r.created_at DESC LIMIT ? OFFSET ?
   `).all(...params, limit, offset);
 
-  const total = (db.prepare(`SELECT COUNT(*) as cnt FROM requests r ${where}`).get(...params) as any).cnt;
+  const total = (await db.prepare(`
+    SELECT COUNT(*) as cnt FROM requests r
+    LEFT JOIN departments d ON r.department_id = d.id
+    ${where}
+  `).get(...params) as any).cnt;
   return Response.json({ requests, total, page, limit });
 }

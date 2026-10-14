@@ -9,7 +9,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   const { id } = await ctx.params;
   const db = getDb();
 
-  const user = db.prepare(`
+  const user = await db.prepare(`
     SELECT u.id, u.employee_id, u.name, u.email, u.role, u.is_active, u.department_id,
            u.created_at, u.updated_at, d.name as department_name
     FROM users u LEFT JOIN departments d ON u.department_id = d.id

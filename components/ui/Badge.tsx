@@ -17,17 +17,24 @@ const assetStatusVariants: Record<AssetStatus, BadgeVariant> = {
   Available: "green",
   Assigned: "blue",
   Maintenance: "yellow",
+  Returned: "purple",
+  Condemned: "red",
+  Disposed: "gray",
 };
 
 const requestStatusVariants: Record<RequestStatus, BadgeVariant> = {
   Pending: "orange",
   "IM Review": "yellow",
+  "On Hold": "gray",
   "JIO Approved": "indigo",
   "SIO Approved": "purple",
+  "Bypass Approved": "blue",
   Issued: "green",
   Rejected: "red",
   Returned: "blue",
   "Under Repair": "yellow",
+  Transferred: "green",
+  Condemned: "red",
 };
 
 const roleVariants: Record<UserRole, BadgeVariant> = {

@@ -11,7 +11,7 @@ export async function GET(_request: NextRequest) {
   if (steps.length === 0) return Response.json({ approvals: [] });
 
   const placeholders = steps.map(() => "?").join(", ");
-  const approvals = db.prepare(`
+  const approvals = await db.prepare(`
     SELECT a.*, r.request_number, r.asset_type, r.quantity,
            r.status as req_status, r.justification,
            u.name as requested_by_name

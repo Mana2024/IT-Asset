@@ -6,13 +6,14 @@ import { createServiceRequest } from "@/app/actions/requests";
 import { Input, Textarea } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { RotateCcw, Wrench } from "lucide-react";
+import { RotateCcw, Wrench, Camera } from "lucide-react";
 
 export default function ServiceRequestPage() {
   const [state, action, isPending] = useActionState(createServiceRequest, undefined);
   const [requestType, setRequestType] = useState<"Return" | "Repair">("Return");
   const [assets, setAssets] = useState<any[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
 
   useEffect(() => {
     fetch("/api/assets?status=Assigned&limit=200")
@@ -64,7 +65,7 @@ export default function ServiceRequestPage() {
             <h3 className="text-sm font-semibold text-gray-700 mb-3 pb-2 border-b border-gray-100">Worker Details</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input label="Employee Name" name="requester_name" required placeholder="Full name of the worker" error={err("requester_name")} />
-              <Input label="Employee ID" name="requester_employee_id" placeholder="e.g. EMP-010" error={err("requester_employee_id")} />
+              <Input label="Office ID Number" name="requester_employee_id" placeholder="e.g. OFC-010" error={err("requester_employee_id")} />
               <Input label="Phone Number" name="requester_phone" type="tel" required placeholder="e.g. +91-9876543210" error={err("requester_phone")} className="sm:col-span-2" />
             </div>
           </div>
@@ -109,6 +110,24 @@ export default function ServiceRequestPage() {
             placeholder={requestType === "Return" ? "Why is this asset being returned?" : "Describe the problem or damage..."}
             error={err("service_reason")}
           />
+
+          {/* Defect photo */}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-2">Photo of Defect (optional)</label>
+            <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 border-dashed cursor-pointer transition-colors text-sm
+              ${photoFile ? "border-green-400 bg-green-50 text-green-800" : "border-gray-300 bg-white text-gray-600 hover:border-blue-300"}`}>
+              <Camera className="h-4 w-4 shrink-0" />
+              <span className="truncate">{photoFile ? photoFile.name : "Choose a photo (JPG, PNG, or WEBP)..."}</span>
+              <input
+                type="file"
+                name="defect_photo"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            {err("defect_photo") && <p className="text-xs text-red-600 mt-1">{err("defect_photo")}</p>}
+          </div>
 
           <div className="flex items-center gap-3 pt-2">
             <Button type="submit" isPending={isPending}

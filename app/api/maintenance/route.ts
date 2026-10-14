@@ -15,8 +15,8 @@ export async function GET(request: NextRequest) {
   const params: any[] = [];
   if (status) { where += " AND ml.status = ?"; params.push(status); }
 
-  const logs = db.prepare(`
-    SELECT ml.*, a.asset_id as asset_asset_id, a.name as asset_name, a.category as asset_category,
+  const logs = await db.prepare(`
+    SELECT ml.*, a.asset_id as asset_asset_id, a.asset_type as asset_name, a.ict_category as asset_category,
            u.name as logged_by_name
     FROM maintenance_logs ml
     JOIN assets a ON ml.asset_id = a.id
@@ -24,6 +24,6 @@ export async function GET(request: NextRequest) {
     ${where} ORDER BY ml.created_at DESC LIMIT ? OFFSET ?
   `).all(...params, limit, offset);
 
-  const total = (db.prepare(`SELECT COUNT(*) as cnt FROM maintenance_logs ml ${where}`).get(...params) as any).cnt;
+  const total = (await db.prepare(`SELECT COUNT(*) as cnt FROM maintenance_logs ml ${where}`).get(...params) as any).cnt;
   return Response.json({ logs, total });
 }

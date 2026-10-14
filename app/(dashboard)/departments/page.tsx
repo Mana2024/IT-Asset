@@ -4,7 +4,7 @@ import { getCurrentUser } from "@/lib/dal";
 import { getDb } from "@/lib/db/client";
 import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { deleteDepartment } from "@/app/actions/departments";
+import { DeleteDepartmentButton } from "@/components/ui/DeleteDepartmentButton";
 import { formatDate } from "@/lib/format";
 
 export default async function DepartmentsPage() {
@@ -13,13 +13,24 @@ export default async function DepartmentsPage() {
 
   const db = getDb();
 
-  const departments = db.prepare(`
-    SELECT d.*, COUNT(u.id) as user_count, COUNT(a.id) as asset_count
+  // Only Dept Users actually belong to a single department — IM/SIO/JIO oversee all departments.
+  const departments = await db.prepare(`
+    SELECT d.*,
+      (SELECT COUNT(*) FROM users u WHERE u.department_id = d.id AND u.is_active = 1 AND u.role = 'DEPT_USER') as user_count,
+      (SELECT COUNT(*) FROM assets a WHERE a.department_id = d.id AND a.status != 'Condemned') as asset_count
     FROM departments d
-    LEFT JOIN users u ON u.department_id = d.id AND u.is_active = 1
-    LEFT JOIN assets a ON a.department_id = d.id
-    GROUP BY d.id ORDER BY d.name
+    ORDER BY d.name
   `).all() as any[];
+
+  const deptUsers = await db.prepare(`
+    SELECT id, name, email, role, department_id FROM users WHERE is_active = 1 AND role = 'DEPT_USER' ORDER BY name
+  `).all() as any[];
+
+  const usersByDept = deptUsers.reduce<Record<number, any[]>>((acc, u) => {
+    if (!u.department_id) return acc;
+    (acc[u.department_id] ??= []).push(u);
+    return acc;
+  }, {});
 
   return (
     <div>
@@ -58,17 +69,21 @@ export default async function DepartmentsPage() {
                   <Pencil className="h-4 w-4" />
                 </Link>
               </div>
-              <div className="flex gap-4 text-sm text-gray-600 border-t border-gray-50 pt-3">
+              <div className="flex gap-4 text-sm text-gray-600 border-t border-gray-50 pt-3 mb-3">
                 <span><span className="font-medium text-gray-900">{dept.user_count}</span> users</span>
                 <span><span className="font-medium text-gray-900">{dept.asset_count}</span> assets</span>
               </div>
-              {dept.user_count === 0 && dept.asset_count === 0 && (
-                <div className="mt-3">
-                  <form action={async () => { "use server"; await deleteDepartment(dept.id); }}>
-                    <button type="submit" className="text-xs text-red-500 hover:text-red-700">Delete</button>
-                  </form>
-                </div>
+              {(usersByDept[dept.id] ?? []).length > 0 && (
+                <ul className="space-y-1 mb-3">
+                  {(usersByDept[dept.id] ?? []).map((u) => (
+                    <li key={u.id} className="flex items-center justify-between text-xs px-2 py-1.5 bg-gray-50 rounded-lg">
+                      <span className="text-gray-800 font-medium">{u.name}</span>
+                      <span className="text-gray-400">{u.email}</span>
+                    </li>
+                  ))}
+                </ul>
               )}
+              <DeleteDepartmentButton id={dept.id} name={dept.name} />
             </div>
           ))}
         </div>

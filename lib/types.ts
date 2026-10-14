@@ -1,18 +1,24 @@
 export type UserRole = "INVENTORY_MANAGER" | "SIO" | "JIO" | "DEPT_USER";
 
-export type AssetStatus = "Available" | "Assigned" | "Maintenance";
+export type AssetStatus = "Available" | "Assigned" | "Maintenance" | "Returned" | "Condemned" | "Disposed";
 
-export type RequestType = "New Asset" | "Return" | "Repair" | "External Issuance";
+export type IctCategory = "I" | "II" | "III" | "IV";
+
+export type RequestType = "New Asset" | "Transfer" | "Return" | "Repair" | "External Issuance" | "Condemnation";
 
 export type RequestStatus =
   | "Pending"
   | "IM Review"
+  | "On Hold"
   | "JIO Approved"
   | "SIO Approved"
+  | "Bypass Approved"
   | "Issued"
   | "Rejected"
   | "Returned"
-  | "Under Repair";
+  | "Under Repair"
+  | "Condemned"
+  | "Transferred";
 
 export type ApprovalStep =
   | "IM Initial Review"
@@ -45,10 +51,12 @@ export interface Asset {
   asset_id: string;
   asset_type: string;
   serial_number: string | null;
+  specifications: string | null;
   description: string | null;
   status: AssetStatus;
   department_id: number | null;
   department_name?: string | null;
+  room_number: string | null;
   issued_date: string | null;
   end_of_life_date: string | null;
   created_by: number;
@@ -69,6 +77,9 @@ export interface AssetRequest {
   status: RequestStatus;
   tentative_asset_id: number | null;
   im_notes: string | null;
+  bypass_approved: number;
+  bypass_reference: string | null;
+  bypass_signed_file: string | null;
   allocated_asset_id: number | null;
   allocation_date: string | null;
   assigned_to_name: string | null;
@@ -105,19 +116,146 @@ export const ROLE_STEPS: Record<string, ApprovalStep[]> = {
 };
 
 export const ASSET_TYPES = [
+  // Category I — Consumables / Use-and-Throw
+  "Printing Consumables (Ink/Toner/Cartridge)",
+  "Storage Media (CD/DVD/Floppy)",
+  "UPS Battery Pack",
+  // Category II — Fast Obsolescence (5 yrs)
   "Laptop",
-  "Desktop",
-  "Workstation",
-  "Server",
-  "Router",
-  "Hub",
-  "Switch",
-  "Printer",
-  "Scanner",
-  "Monitor",
-  "UPS",
-  "Projector",
-  "Phone",
   "Tablet",
+  "Mobile Phone / Smartphone",
+  "Pen Drive / USB Drive",
+  "External Storage (HDD/SSD)",
+  // Category III — Medium Obsolescence (7 yrs)
+  "Server",
+  "Mainframe",
+  "Desktop Computer",
+  "Workstation",
+  "Monitor / Display Unit",
+  "Keyboard and Mouse",
+  "Storage Device (Internal HDD/SSD)",
+  "Printer (Laser)",
+  "Printer (Inkjet/Dot Matrix)",
+  "Scanner",
+  "Photocopier / MFD",
+  "Projector",
+  "UPS (Uninterruptible Power Supply)",
+  "Inverter",
+  "GPS Device",
+  "Video Conferencing Equipment",
+  "Interactive Kiosk",
+  "Camera / Webcam",
+  "Router",
+  "Switch",
+  "Hub",
+  "Modem",
+  "Firewall / Security Appliance",
+  "Network Attached Storage (NAS)",
+  // Category IV — Slow Obsolescence (10 yrs)
+  "LED TV / Digital Display",
+  "FAX Machine",
+  "EPABX System",
+  "Biometric / Attendance System",
+  "DVD Player",
   "Other",
 ];
+
+// Short prefix code used to auto-generate asset IDs: {CODE}-{YEAR}-{seq}
+export const ASSET_TYPE_CODE: Record<string, string> = {
+  "Printing Consumables (Ink/Toner/Cartridge)": "INK",
+  "Storage Media (CD/DVD/Floppy)": "STM",
+  "UPS Battery Pack": "UBP",
+  "Laptop": "LAP",
+  "Tablet": "TAB",
+  "Mobile Phone / Smartphone": "MOB",
+  "Pen Drive / USB Drive": "USB",
+  "External Storage (HDD/SSD)": "EXS",
+  "Server": "SRV",
+  "Mainframe": "MFR",
+  "Desktop Computer": "DSK",
+  "Workstation": "WKS",
+  "Monitor / Display Unit": "MON",
+  "Keyboard and Mouse": "KBM",
+  "Storage Device (Internal HDD/SSD)": "STD",
+  "Printer (Laser)": "PRL",
+  "Printer (Inkjet/Dot Matrix)": "PRI",
+  "Scanner": "SCN",
+  "Photocopier / MFD": "PHC",
+  "Projector": "PRJ",
+  "UPS (Uninterruptible Power Supply)": "UPS",
+  "Inverter": "INV",
+  "GPS Device": "GPS",
+  "Video Conferencing Equipment": "VCE",
+  "Interactive Kiosk": "KSK",
+  "Camera / Webcam": "CAM",
+  "Router": "RTR",
+  "Switch": "SWT",
+  "Hub": "HUB",
+  "Modem": "MDM",
+  "Firewall / Security Appliance": "FWL",
+  "Network Attached Storage (NAS)": "NAS",
+  "LED TV / Digital Display": "LED",
+  "FAX Machine": "FAX",
+  "EPABX System": "EPX",
+  "Biometric / Attendance System": "BIO",
+  "DVD Player": "DVD",
+  "Other": "OTH",
+};
+
+export const ASSET_TYPE_CATEGORY: Record<string, IctCategory> = {
+  // Category I — Consumables
+  "Printing Consumables (Ink/Toner/Cartridge)": "I",
+  "Storage Media (CD/DVD/Floppy)": "I",
+  "UPS Battery Pack": "I",
+  // Category II — 5 years
+  "Laptop": "II",
+  "Tablet": "II",
+  "Mobile Phone / Smartphone": "II",
+  "Pen Drive / USB Drive": "II",
+  "External Storage (HDD/SSD)": "II",
+  // Category III — 7 years
+  "Server": "III",
+  "Mainframe": "III",
+  "Desktop Computer": "III",
+  "Workstation": "III",
+  "Monitor / Display Unit": "III",
+  "Keyboard and Mouse": "III",
+  "Storage Device (Internal HDD/SSD)": "III",
+  "Printer (Laser)": "III",
+  "Printer (Inkjet/Dot Matrix)": "III",
+  "Scanner": "III",
+  "Photocopier / MFD": "III",
+  "Projector": "III",
+  "UPS (Uninterruptible Power Supply)": "III",
+  "Inverter": "III",
+  "GPS Device": "III",
+  "Video Conferencing Equipment": "III",
+  "Interactive Kiosk": "III",
+  "Camera / Webcam": "III",
+  "Router": "III",
+  "Switch": "III",
+  "Hub": "III",
+  "Modem": "III",
+  "Firewall / Security Appliance": "III",
+  "Network Attached Storage (NAS)": "III",
+  // Category IV — 10 years
+  "LED TV / Digital Display": "IV",
+  "FAX Machine": "IV",
+  "EPABX System": "IV",
+  "Biometric / Attendance System": "IV",
+  "DVD Player": "IV",
+};
+
+export const CATEGORY_LIFESPAN_YEARS: Record<IctCategory, number> = {
+  "I": 1,   // Consumables — use and throw, 1 yr for tracking
+  "II": 5,
+  "III": 7,
+  "IV": 10,
+};
+
+export const CATEGORY_LABELS: Record<IctCategory, string> = {
+  "I": "Category I — Consumables / Use-and-Throw (1 yr)",
+  "II": "Category II — Fast Obsolescence: Laptops, Mobiles (5 yrs)",
+  "III": "Category III — Medium Obsolescence: Servers, Desktops, Peripherals, Network (7 yrs)",
+  "IV": "Category IV — Slow Obsolescence: TVs, FAX, EPABX (10 yrs)",
+};

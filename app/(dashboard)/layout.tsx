@@ -11,9 +11,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       <Sidebar role={user.role} />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <TopNav userName={user.name} role={user.role} />
-        <main className="flex-1 overflow-y-auto">
-          <div className="max-w-7xl mx-auto px-6 py-6">
-            {children}
+        <main className="flex-1 overflow-y-auto print:overflow-visible">
+          <div className="max-w-7xl mx-auto px-6 py-6 print:max-w-none print:p-0">
+            <div className="flex gap-6">
+              <div className="flex-1">{children}</div>
+            </div>
           </div>
         </main>
       </div>

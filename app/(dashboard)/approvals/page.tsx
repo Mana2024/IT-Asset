@@ -23,7 +23,7 @@ export default async function ApprovalsPage() {
   }
 
   const placeholders = steps.map(() => "?").join(", ");
-  const approvals = db.prepare(`
+  const approvals = await db.prepare(`
     SELECT a.*, r.request_number, r.asset_type, r.quantity,
            r.status as req_status, r.justification,
            u.name as requested_by_name, r.created_at as req_created_at,

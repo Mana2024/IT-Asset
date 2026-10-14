@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { decrypt } from "@/lib/session";
 
-const PUBLIC_ROUTES = ["/login"];
+const PUBLIC_ROUTES = ["/login", "/verify-otp", "/verify-login-otp"];
 const INVENTORY_MANAGER_ONLY = ["/users", "/departments"];
 
 export async function proxy(request: NextRequest) {

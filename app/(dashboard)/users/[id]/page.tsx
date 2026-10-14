@@ -14,12 +14,14 @@ import { formatDate } from "@/lib/format";
 import { use } from "react";
 
 const ROLES = Object.entries(ROLE_LABELS).map(([value, label]) => ({ value, label }));
+const DEPARTMENT_SCOPED_ROLES = ["DEPT_USER"];
 
 export default function UserDetailPage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params);
   const [user, setUser] = useState<any>(null);
   const [departments, setDepartments] = useState<any[]>([]);
   const [isDeactivating, startDeactivating] = useTransition();
+  const [role, setRole] = useState("");
 
   const boundUpdateUser = updateUser.bind(null, parseInt(id));
   const [state, action, isPending] = useActionState(boundUpdateUser, undefined);
@@ -28,7 +30,7 @@ export default function UserDetailPage(props: { params: Promise<{ id: string }> 
   const [pwState, pwAction, pwPending] = useActionState(boundResetPassword, undefined);
 
   useEffect(() => {
-    fetch(`/api/users/${id}`).then((r) => r.json()).then((d) => setUser(d.user));
+    fetch(`/api/users/${id}`).then((r) => r.json()).then((d) => { setUser(d.user); setRole(d.user?.role ?? ""); });
     fetch("/api/departments").then((r) => r.json()).then((d) => setDepartments(d.departments ?? []));
   }, [id]);
 
@@ -42,6 +44,7 @@ export default function UserDetailPage(props: { params: Promise<{ id: string }> 
   if (!user) return <div className="text-center py-16 text-gray-400">Loading...</div>;
 
   const err = (f: string) => state?.errors?.[f]?.[0];
+  const showDepartment = DEPARTMENT_SCOPED_ROLES.includes(role);
 
   return (
     <div>
@@ -69,7 +72,7 @@ export default function UserDetailPage(props: { params: Promise<{ id: string }> 
           <h3 className="font-semibold text-gray-900 mb-4">Account Info</h3>
           <dl className="space-y-3 text-sm">
             {([
-              ["Employee ID", user.employee_id],
+              ["Office ID Number", user.employee_id],
               ["Email", user.email],
               ["Department", user.department_name ?? "—"],
               ["Created", formatDate(user.created_at)],
@@ -80,7 +83,7 @@ export default function UserDetailPage(props: { params: Promise<{ id: string }> 
               </div>
             ))}
           </dl>
-          {user.is_active && (
+          {!!user.is_active && (
             <div className="mt-4 pt-4 border-t border-gray-100">
               <Button onClick={handleDeactivate} isPending={isDeactivating} variant="destructive" size="sm">
                 Deactivate Account
@@ -94,8 +97,26 @@ export default function UserDetailPage(props: { params: Promise<{ id: string }> 
           <form action={action} className="space-y-4">
             <input type="hidden" name="is_active" value={user.is_active ? "1" : "0"} />
             <Input label="Full Name" name="name" required defaultValue={user.name} error={err("name")} />
-            <Select label="Role" name="role" required options={ROLES} defaultValue={user.role} />
-            <Select label="Department" name="department_id" options={departments.map((d) => ({ value: d.id, label: d.name }))} placeholder="Select department" defaultValue={user.department_id ?? ""} />
+            <Select label="Role" name="role" required options={ROLES} value={role} onChange={(e) => setRole(e.target.value)} />
+            {showDepartment ? (
+              <div>
+                <Input
+                  label="Department"
+                  name="department_name"
+                  placeholder="e.g. IT Department"
+                  helpText="Type a new name to create it, or match an existing one"
+                  defaultValue={user.department_name ?? ""}
+                  list="department-names"
+                />
+                <datalist id="department-names">
+                  {departments.map((d: any) => <option key={d.id} value={d.name} />)}
+                </datalist>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500">
+                {ROLE_LABELS[role as keyof typeof ROLE_LABELS]} oversees all departments — no single department assignment needed.
+              </p>
+            )}
             <Button type="submit" isPending={isPending} size="sm">Save Changes</Button>
             {state?.message && <p className="text-sm text-green-600">{state.message}</p>}
           </form>

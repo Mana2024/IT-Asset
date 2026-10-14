@@ -41,6 +41,12 @@ yarn-error.log*
 /data/*.db-shm
 /data/*.db-wal
 
+# uploaded signed documents
+/data/uploads/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# non-code reference docs, archived locally out of the tracked project
+/_docs_archive/

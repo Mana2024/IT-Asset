@@ -9,7 +9,7 @@ export async function POST(request: Request) {
   }
 
   const db = getDb();
-  const user = db.prepare("SELECT * FROM users WHERE email = ? AND is_active = 1").get(email) as any;
+  const user = await db.prepare("SELECT * FROM users WHERE email = ? AND is_active = 1").get(email) as any;
   if (!user) return Response.json({ error: "Invalid credentials" }, { status: 401 });
 
   const valid = await bcrypt.compare(password, user.password_hash);

@@ -1,11 +1,5 @@
 import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = {
-  turbopack: {
-    resolveAlias: {
-      "better-sqlite3": { browser: "./lib/db/empty.ts" },
-    },
-  },
-};
+const nextConfig: NextConfig = {};
 
 export default nextConfig;

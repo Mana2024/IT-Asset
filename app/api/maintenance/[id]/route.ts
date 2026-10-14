@@ -1,14 +1,15 @@
 import type { NextRequest } from "next/server";
 import { verifySession } from "@/lib/dal";
 import { getDb } from "@/lib/db/client";
+import { withTransaction } from "@/lib/db/transaction";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   await verifySession();
   const { id } = await ctx.params;
   const db = getDb();
 
-  const log = db.prepare(`
-    SELECT ml.*, a.asset_id as asset_asset_id, a.name as asset_name, a.category,
+  const log = await db.prepare(`
+    SELECT ml.*, a.asset_id as asset_asset_id, a.asset_type as asset_name, a.ict_category as asset_category,
            u.name as logged_by_name
     FROM maintenance_logs ml
     JOIN assets a ON ml.asset_id = a.id
@@ -28,24 +29,23 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   const body = await request.json();
   const db = getDb();
 
-  const log = db.prepare("SELECT * FROM maintenance_logs WHERE id = ?").get(parseInt(id)) as any;
+  const log = await db.prepare("SELECT * FROM maintenance_logs WHERE id = ?").get(parseInt(id)) as any;
   if (!log) return Response.json({ error: "Not found" }, { status: 404 });
 
   if (body.action === "close") {
-    const closeTx = db.transaction(() => {
-      db.prepare(`
+    await withTransaction(async (tx) => {
+      await tx.run(`
         UPDATE maintenance_logs SET status='Completed', actual_cost=?, notes=?,
-          completed_at=datetime('now'), updated_at=datetime('now') WHERE id=?
-      `).run(body.actual_cost ?? null, body.notes ?? null, parseInt(id));
-      db.prepare("UPDATE assets SET status='Available', updated_at=datetime('now') WHERE id=?").run(log.asset_id);
+          completed_at=NOW(), updated_at=NOW() WHERE id=?
+      `, body.actual_cost ?? null, body.notes ?? null, parseInt(id));
+      await tx.run("UPDATE assets SET status='Available', updated_at=NOW() WHERE id=?", log.asset_id);
     });
-    closeTx();
   } else {
     const allowedFields = ["status", "vendor_name", "vendor_contact", "estimated_cost", "actual_cost", "started_at", "completed_at", "next_service_date", "notes"];
     const fields = Object.entries(body).filter(([k]) => allowedFields.includes(k)).map(([k]) => `${k}=?`).join(", ");
     const values = Object.entries(body).filter(([k]) => allowedFields.includes(k)).map(([, v]) => v);
     if (fields) {
-      db.prepare(`UPDATE maintenance_logs SET ${fields}, updated_at=datetime('now') WHERE id=?`).run(...values, parseInt(id));
+      await db.prepare(`UPDATE maintenance_logs SET ${fields}, updated_at=NOW() WHERE id=?`).run(...values, parseInt(id));
     }
   }
 

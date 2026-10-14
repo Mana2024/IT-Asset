@@ -2,47 +2,119 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { verifySession } from "@/lib/dal";
+import { mkdir, writeFile } from "fs/promises";
+import path from "path";
+import { verifySession, getCurrentUser } from "@/lib/dal";
 import { getDb } from "@/lib/db/client";
+import { withTransaction } from "@/lib/db/transaction";
 import { generateRequestNumber } from "@/lib/utils";
+import { recordAssetEvent } from "@/lib/history";
 
 type ActionState = { errors?: Record<string, string[]>; message?: string } | undefined;
+
+const DEFECT_PHOTOS_DIR = path.join(process.cwd(), "data", "uploads", "defect-photos");
+const ALLOWED_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+// Optional photo evidence of a defect, attached to a Repair or Condemnation request.
+// Returns an error object if the file fails validation, or null if it's fine to proceed
+// (including the case where no file was actually chosen — this is never mandatory).
+function validateDefectPhoto(file: File | null): { defect_photo: string[] } | null {
+  if (!file || file.size === 0) return null;
+  if (!ALLOWED_PHOTO_TYPES.includes(file.type)) return { defect_photo: ["Photo must be a JPG, PNG, or WEBP image"] };
+  if (file.size > 10 * 1024 * 1024) return { defect_photo: ["Photo must be under 10MB"] };
+  return null;
+}
+
+async function saveDefectPhoto(requestId: number, file: File): Promise<string> {
+  await mkdir(DEFECT_PHOTOS_DIR, { recursive: true });
+  const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const filename = `req-${requestId}-${Date.now()}.${ext}`;
+  const buffer = Buffer.from(await file.arrayBuffer());
+  await writeFile(path.join(DEFECT_PHOTOS_DIR, filename), buffer);
+  return filename;
+}
+
+const EMERGENCY_DOCS_DIR = path.join(process.cwd(), "data", "uploads", "emergency-approvals");
+const ALLOWED_EMERGENCY_DOC_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+
+// Lets the IM attach proof of approval to an emergency request after the fact — emergency
+// requests skip the signed paperwork up front, so this is the only record of approval.
+export async function uploadEmergencyApprovalDocument(requestId: number, file: File) {
+  const { role } = await verifySession();
+  if (role !== "INVENTORY_MANAGER") return { error: "Unauthorized" };
+
+  if (!file || file.size === 0) return { error: "Choose a file to upload" };
+  if (!ALLOWED_EMERGENCY_DOC_TYPES.includes(file.type)) return { error: "File must be a PDF or image (JPG, PNG, WEBP)" };
+  if (file.size > 10 * 1024 * 1024) return { error: "File must be under 10MB" };
+
+  const db = getDb();
+  const request = await db.prepare("SELECT id FROM requests WHERE id = ? AND is_emergency = 1").get(requestId) as any;
+  if (!request) return { error: "Request not found or not an emergency request" };
+
+  await mkdir(EMERGENCY_DOCS_DIR, { recursive: true });
+  const ext = (file.name.split(".").pop() || "pdf").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const filename = `req-${requestId}-${Date.now()}.${ext}`;
+  const buffer = Buffer.from(await file.arrayBuffer());
+  await writeFile(path.join(EMERGENCY_DOCS_DIR, filename), buffer);
+
+  await db.prepare("UPDATE requests SET emergency_approval_document = ?, updated_at = NOW() WHERE id = ?").run(filename, requestId);
+
+  revalidatePath("/requests");
+  return {};
+}
 
 export async function createRequest(_state: ActionState, formData: FormData): Promise<ActionState> {
   const { userId } = await verifySession();
   const db = getDb();
 
-  const asset_type = (formData.get("asset_type") as string)?.trim();
-  const quantity = parseInt(formData.get("quantity") as string) || 1;
   const justification = (formData.get("justification") as string)?.trim();
   const requester_name = (formData.get("requester_name") as string)?.trim() || null;
   const requester_employee_id = (formData.get("requester_employee_id") as string)?.trim() || null;
   const requester_email = (formData.get("requester_email") as string)?.trim() || null;
   const requester_designation = (formData.get("requester_designation") as string)?.trim() || null;
   const requester_phone = (formData.get("requester_phone") as string)?.trim() || null;
-  const user = db.prepare("SELECT department_id FROM users WHERE id = ?").get(userId) as any;
 
-  if (!asset_type) return { errors: { asset_type: ["Asset type is required"] } };
+  const submittedDept = formData.get("department_id") as string;
+  if (!submittedDept) return { errors: { department_id: ["Department is required"] } };
+  const department_id = parseInt(submittedDept);
+
+  // Parse multiple items: asset_type[] and quantity[]
+  const assetTypes = formData.getAll("asset_type") as string[];
+  const quantities = formData.getAll("quantity") as string[];
+  const items = assetTypes.map((t, i) => ({ asset_type: t.trim(), quantity: parseInt(quantities[i]) || 1 }))
+                           .filter(it => it.asset_type);
+
+  if (items.length === 0) return { errors: { asset_type: ["At least one asset item is required"] } };
   if (!justification) return { errors: { justification: ["Justification is required"] } };
   if (!requester_name) return { errors: { requester_name: ["Worker name is required"] } };
-  if (!requester_employee_id) return { errors: { requester_employee_id: ["Worker employee ID is required"] } };
+  if (!requester_employee_id) return { errors: { requester_employee_id: ["Worker office ID number is required"] } };
   if (!requester_phone) return { errors: { requester_phone: ["Worker phone number is required"] } };
+  if (!requester_designation) return { errors: { requester_designation: ["Worker designation is required"] } };
 
-  const request_number = generateRequestNumber(db);
+  const request_type = "New Asset";
 
-  const result = db.prepare(`
-    INSERT INTO requests (request_number, requested_by, department_id, asset_type, quantity, justification,
-                          requester_name, requester_employee_id, requester_email,
-                          requester_designation, requester_phone)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(request_number, userId, user?.department_id ?? null, asset_type, quantity, justification,
-         requester_name, requester_employee_id, requester_email, requester_designation, requester_phone);
+  const request_number = await generateRequestNumber(db);
+  const primary_asset_type = items.length === 1 ? items[0].asset_type : "Multiple";
+  const total_quantity = items.reduce((s, it) => s + it.quantity, 0);
 
-  const requestId = result.lastInsertRowid as number;
+  await withTransaction(async (tx) => {
+    const result = await tx.prepare(`
+      INSERT INTO requests (request_number, requested_by, department_id, request_type, asset_type, quantity, justification,
+                            requester_name, requester_employee_id, requester_email,
+                            requester_designation, requester_phone)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(request_number, userId, department_id, request_type, primary_asset_type, total_quantity, justification,
+           requester_name, requester_employee_id, requester_email, requester_designation, requester_phone);
 
-  db.prepare(`INSERT INTO approvals (request_id, step) VALUES (?, 'IM Initial Review')`).run(requestId);
+    const requestId = result.insertId;
 
-  revalidatePath("/requests");
+    const insertItem = tx.prepare(`INSERT INTO request_items (request_id, asset_type, quantity) VALUES (?, ?, ?)`);
+    for (const item of items) await insertItem.run(requestId, item.asset_type, item.quantity);
+
+    await tx.prepare(`INSERT INTO approvals (request_id, step) VALUES (?, 'IM Initial Review')`).run(requestId);
+  });
+
+  revalidatePath("/", "layout");
   redirect("/requests");
 }
 
@@ -64,13 +136,17 @@ export async function createServiceRequest(_state: ActionState, formData: FormDa
   if (!requester_name) return { errors: { requester_name: ["Worker name is required"] } };
   if (!requester_phone) return { errors: { requester_phone: ["Phone number is required"] } };
 
-  const asset = db.prepare("SELECT * FROM assets WHERE id = ? AND status = 'Assigned'").get(service_asset_id) as any;
+  const defectPhoto = formData.get("defect_photo") as File | null;
+  const photoError = validateDefectPhoto(defectPhoto);
+  if (photoError) return { errors: photoError };
+
+  const asset = await db.prepare("SELECT * FROM assets WHERE id = ? AND status = 'Assigned'").get(service_asset_id) as any;
   if (!asset) return { errors: { service_asset_id: ["Asset not found or not currently assigned"] } };
 
-  const user = db.prepare("SELECT department_id FROM users WHERE id = ?").get(userId) as any;
-  const request_number = generateRequestNumber(db);
+  const user = await db.prepare("SELECT department_id FROM users WHERE id = ?").get(userId) as any;
+  const request_number = await generateRequestNumber(db);
 
-  const result = db.prepare(`
+  const result = await db.prepare(`
     INSERT INTO requests (request_number, requested_by, department_id, request_type,
                           asset_type, justification,
                           service_asset_id, service_reason,
@@ -81,10 +157,15 @@ export async function createServiceRequest(_state: ActionState, formData: FormDa
          service_asset_id, service_reason,
          requester_name, requester_employee_id, requester_phone);
 
-  const requestId = result.lastInsertRowid as number;
-  db.prepare(`INSERT INTO approvals (request_id, step) VALUES (?, 'IM Service Processing')`).run(requestId);
+  const requestId = result.insertId;
+  await db.prepare(`INSERT INTO approvals (request_id, step) VALUES (?, 'IM Service Processing')`).run(requestId);
 
-  revalidatePath("/requests");
+  if (defectPhoto && defectPhoto.size > 0) {
+    const filename = await saveDefectPhoto(requestId, defectPhoto);
+    await db.prepare("UPDATE requests SET defect_photo = ? WHERE id = ?").run(filename, requestId);
+  }
+
+  revalidatePath("/", "layout");
   redirect("/requests");
 }
 
@@ -97,7 +178,7 @@ export async function processServiceRequest(
   if (role !== "INVENTORY_MANAGER") return { error: "Unauthorized" };
 
   const db = getDb();
-  const approval = db.prepare(`
+  const approval = await db.prepare(`
     SELECT a.*, r.id as req_id, r.request_type, r.service_asset_id
     FROM approvals a JOIN requests r ON a.request_id = r.id
     WHERE a.id = ? AND a.step = 'IM Service Processing' AND a.status = 'Pending'
@@ -105,30 +186,35 @@ export async function processServiceRequest(
 
   if (!approval) return { error: "Not found or already processed" };
 
-  const tx = db.transaction(() => {
-    db.prepare(`
-      UPDATE approvals SET status=?, reviewer_id=?, comments=?, reviewed_at=datetime('now')
+  await withTransaction(async (tx) => {
+    await tx.run(`
+      UPDATE approvals SET status=?, reviewer_id=?, comments=?, reviewed_at=NOW()
       WHERE id=?
-    `).run(decision, userId, comments || null, approvalId);
+    `, decision, userId, comments || null, approvalId);
 
     if (decision === "Rejected") {
-      db.prepare("UPDATE requests SET status='Rejected', updated_at=datetime('now') WHERE id=?").run(approval.req_id);
+      await tx.run("UPDATE requests SET status='Rejected', updated_at=NOW() WHERE id=?", approval.req_id);
       return;
     }
 
     if (approval.request_type === "Return") {
-      db.prepare("UPDATE assets SET status='Available', department_id=NULL, issued_date=NULL, end_of_life_date=NULL, updated_at=datetime('now') WHERE id=?").run(approval.service_asset_id);
-      db.prepare("UPDATE requests SET status='Returned', updated_at=datetime('now') WHERE id=?").run(approval.req_id);
+      await tx.run("UPDATE assets SET status='Returned', department_id=NULL, issued_date=NULL, end_of_life_date=NULL, updated_at=NOW() WHERE id=?", approval.service_asset_id);
+      await tx.run("UPDATE requests SET status='Returned', updated_at=NOW() WHERE id=?", approval.req_id);
     } else if (approval.request_type === "Repair") {
-      db.prepare("UPDATE assets SET status='Maintenance', updated_at=datetime('now') WHERE id=?").run(approval.service_asset_id);
-      db.prepare("UPDATE requests SET status='Under Repair', updated_at=datetime('now') WHERE id=?").run(approval.req_id);
+      await tx.run("UPDATE assets SET status='Maintenance', updated_at=NOW() WHERE id=?", approval.service_asset_id);
+      await tx.run("UPDATE requests SET status='Under Repair', updated_at=NOW() WHERE id=?", approval.req_id);
     }
   });
 
-  tx();
-  revalidatePath("/approvals");
-  revalidatePath("/requests");
-  revalidatePath("/assets");
+  if (decision === "Approved") {
+    if (approval.request_type === "Return") {
+      await recordAssetEvent(approval.service_asset_id, "Returned", userId, comments || "Returned to inventory");
+    } else if (approval.request_type === "Repair") {
+      await recordAssetEvent(approval.service_asset_id, "Sent for Maintenance", userId, comments || "Under repair");
+    }
+  }
+
+  revalidatePath("/", "layout");
 }
 
 export async function createExternalIssuanceRequest(_state: ActionState, formData: FormData): Promise<ActionState> {
@@ -150,9 +236,9 @@ export async function createExternalIssuanceRequest(_state: ActionState, formDat
   if (!asset_type) return { errors: { asset_type: ["Asset type is required"] } };
   if (!justification) return { errors: { justification: ["Purpose / justification is required"] } };
 
-  const request_number = generateRequestNumber(db);
+  const request_number = await generateRequestNumber(db);
 
-  const result = db.prepare(`
+  const result = await db.prepare(`
     INSERT INTO requests (request_number, requested_by, request_type, asset_type, quantity, justification,
                           issue_to_type, issue_to_org_name,
                           requester_name, requester_phone,
@@ -162,20 +248,90 @@ export async function createExternalIssuanceRequest(_state: ActionState, formDat
          issue_to_type, issue_to_org_name,
          contact_person, contact_phone);
 
-  const requestId = result.lastInsertRowid as number;
-  db.prepare(`INSERT INTO approvals (request_id, step) VALUES (?, 'JIO Approval')`).run(requestId);
+  const requestId = result.insertId;
+  await db.prepare(`INSERT INTO approvals (request_id, step) VALUES (?, 'JIO Approval')`).run(requestId);
 
-  revalidatePath("/requests");
+  revalidatePath("/", "layout");
+  redirect("/requests");
+}
+
+export async function createCondemnationRequest(_state: ActionState, formData: FormData): Promise<ActionState> {
+  const { id: userId, role, departmentId } = await getCurrentUser();
+
+  const db = getDb();
+  const asset_id_str = (formData.get("asset_id") as string)?.trim();
+  const condemnation_reason = (formData.get("condemnation_reason") as string)?.trim();
+  const justification = (formData.get("justification") as string)?.trim();
+  const data_sanitized = formData.get("data_sanitized") === "1" ? 1 : 0;
+
+  if (!asset_id_str) return { errors: { asset_id: ["Asset is required"] } };
+  if (!condemnation_reason) return { errors: { condemnation_reason: ["Reason is required"] } };
+  if (!justification) return { errors: { justification: ["Justification is required"] } };
+  if (!data_sanitized) return { errors: { data_sanitized: ["Data sanitization must be confirmed"] } };
+
+  const defectPhoto = formData.get("defect_photo") as File | null;
+  const photoError = validateDefectPhoto(defectPhoto);
+  if (photoError) return { errors: photoError };
+
+  const isIM = role === "INVENTORY_MANAGER";
+  // Dept users can only request condemnation for an asset actually assigned to their own
+  // department — IM can request it for anything not already condemned.
+  const asset = isIM
+    ? await db.prepare("SELECT * FROM assets WHERE id = ? AND status != 'Condemned'").get(parseInt(asset_id_str)) as any
+    : await db.prepare("SELECT * FROM assets WHERE id = ? AND status = 'Assigned' AND department_id = ?").get(parseInt(asset_id_str), departmentId) as any;
+  if (!asset) return { errors: { asset_id: ["Asset not found, already condemned, or not assigned to your department"] } };
+
+  const request_number = await generateRequestNumber(db);
+
+  // IM-initiated condemnation skips straight to JIO Approval (the IM already vetted it
+  // by creating the request); a worker/dept-user-initiated one goes through IM Initial
+  // Review first, same as any other request they submit.
+  const status = isIM ? "IM Review" : "Pending";
+  const firstStep = isIM ? "JIO Approval" : "IM Initial Review";
+
+  const result = await db.prepare(`
+    INSERT INTO requests (request_number, requested_by, request_type, asset_type,
+                          justification, condemnation_reason, data_sanitized,
+                          service_asset_id, status)
+    VALUES (?, ?, 'Condemnation', ?, ?, ?, ?, ?, ?)
+  `).run(request_number, userId, asset.asset_type, justification,
+         condemnation_reason, data_sanitized, asset.id, status);
+
+  const requestId = result.insertId;
+  await db.prepare(`INSERT INTO approvals (request_id, step) VALUES (?, ?)`).run(requestId, firstStep);
+
+  if (defectPhoto && defectPhoto.size > 0) {
+    const filename = await saveDefectPhoto(requestId, defectPhoto);
+    await db.prepare("UPDATE requests SET defect_photo = ? WHERE id = ?").run(filename, requestId);
+  }
+
+  revalidatePath("/", "layout");
   redirect("/requests");
 }
 
 export async function cancelRequest(id: number) {
   const { userId } = await verifySession();
   const db = getDb();
-  const req = db.prepare("SELECT * FROM requests WHERE id = ?").get(id) as any;
+  const req = await db.prepare("SELECT * FROM requests WHERE id = ?").get(id) as any;
   if (!req || req.requested_by !== userId) return;
   if (req.status !== "Pending") return;
-  db.prepare("UPDATE requests SET status = 'Rejected', updated_at = datetime('now') WHERE id = ?").run(id);
-  revalidatePath("/requests");
-  revalidatePath(`/requests/${id}`);
+  await db.prepare("UPDATE requests SET status = 'Rejected', updated_at = NOW() WHERE id = ?").run(id);
+  revalidatePath("/", "layout");
+}
+
+export async function deleteRequest(id: number) {
+  const { userId, role } = await verifySession();
+  const db = getDb();
+  const req = await db.prepare("SELECT * FROM requests WHERE id = ?").get(id) as any;
+  if (!req) return;
+  if (req.status !== "Pending") return;
+  if (role !== "INVENTORY_MANAGER" && req.requested_by !== userId) return;
+
+  await withTransaction(async (tx) => {
+    await tx.run("DELETE FROM request_items WHERE request_id = ?", id);
+    await tx.run("DELETE FROM approvals WHERE request_id = ?", id);
+    await tx.run("DELETE FROM requests WHERE id = ?", id);
+  });
+
+  revalidatePath("/", "layout");
 }

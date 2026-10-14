@@ -15,21 +15,18 @@ export async function GET(request: NextRequest) {
   const params: any[] = [];
   if (status) { where += " AND t.status = ?"; params.push(status); }
 
-  const transfers = db.prepare(`
-    SELECT t.*, a.asset_id as asset_asset_id, a.name as asset_name,
+  const transfers = await db.prepare(`
+    SELECT t.*, a.asset_id as asset_code, a.asset_type,
            fd.name as from_dept_name, td.name as to_dept_name,
-           fu.name as from_user_name, tu.name as to_user_name,
            iu.name as initiated_by_name
     FROM asset_transfers t
     JOIN assets a ON t.asset_id = a.id
     LEFT JOIN departments fd ON t.from_dept_id = fd.id
     LEFT JOIN departments td ON t.to_dept_id = td.id
-    LEFT JOIN users fu ON t.from_user_id = fu.id
-    LEFT JOIN users tu ON t.to_user_id = tu.id
     LEFT JOIN users iu ON t.initiated_by = iu.id
     ${where} ORDER BY t.created_at DESC LIMIT ? OFFSET ?
   `).all(...params, limit, offset);
 
-  const total = (db.prepare(`SELECT COUNT(*) as cnt FROM asset_transfers t ${where}`).get(...params) as any).cnt;
+  const total = (await db.prepare(`SELECT COUNT(*) as cnt FROM asset_transfers t ${where}`).get(...params) as any).cnt;
   return Response.json({ transfers, total });
 }

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Users } from "lucide-react";
+import { Plus, Users, Mail } from "lucide-react";
 import { getCurrentUser } from "@/lib/dal";
 import { getDb } from "@/lib/db/client";
 import { redirect } from "next/navigation";
@@ -7,12 +7,14 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { RoleBadge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { formatDate } from "@/lib/format";
+import { UserRowActions } from "@/components/ui/UserRowActions";
 
 export default async function UsersPage(props: { searchParams: Promise<Record<string, string>> }) {
   const user = await getCurrentUser();
   if (user.role !== "INVENTORY_MANAGER") redirect("/dashboard");
 
   const sp = await props.searchParams;
+  const created = sp.created === "1";
   const db = getDb();
   const q = sp.q ?? "";
 
@@ -20,7 +22,7 @@ export default async function UsersPage(props: { searchParams: Promise<Record<st
   const params: any[] = [];
   if (q) { where += " AND (u.name LIKE ? OR u.email LIKE ? OR u.employee_id LIKE ?)"; const qp = `%${q}%`; params.push(qp, qp, qp); }
 
-  const users = db.prepare(`
+  const users = await db.prepare(`
     SELECT u.id, u.employee_id, u.name, u.email, u.role, u.is_active, u.created_at,
            d.name as department_name
     FROM users u LEFT JOIN departments d ON u.department_id = d.id
@@ -39,6 +41,16 @@ export default async function UsersPage(props: { searchParams: Promise<Record<st
         }
       />
 
+      {created && (
+        <div className="mb-5 flex items-start gap-3 p-4 bg-green-50 border border-green-200 rounded-xl text-sm text-green-800">
+          <Mail className="h-4 w-4 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-semibold">New user created</p>
+            <p className="text-green-700 mt-0.5">The account is active — they'll be asked to set their own password on first login.</p>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
         <div className="p-4 border-b border-gray-100">
           <form className="flex gap-3">
@@ -53,7 +65,7 @@ export default async function UsersPage(props: { searchParams: Promise<Record<st
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Employee ID</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Office ID Number</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Name</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Email</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Role</th>
@@ -72,13 +84,15 @@ export default async function UsersPage(props: { searchParams: Promise<Record<st
                   <td className="px-4 py-3"><RoleBadge role={u.role} /></td>
                   <td className="px-4 py-3 text-gray-600">{u.department_name ?? "—"}</td>
                   <td className="px-4 py-3">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${u.is_active ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
-                      {u.is_active ? "Active" : "Inactive"}
-                    </span>
+                    {u.is_active ? (
+                      <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-green-100 text-green-700">Active</span>
+                    ) : (
+                      <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">Inactive</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-gray-400 text-xs">{formatDate(u.created_at)}</td>
                   <td className="px-4 py-3">
-                    <Link href={`/users/${u.id}`} className="text-blue-600 hover:text-blue-700 text-xs font-medium">View</Link>
+                    <UserRowActions userId={u.id} isActive={u.is_active} />
                   </td>
                 </tr>
               ))}

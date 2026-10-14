@@ -21,13 +21,13 @@ export async function GET(request: NextRequest) {
   if (dept) { where += " AND a.department_id = ?"; params.push(parseInt(dept)); }
   if (q) { where += " AND (a.asset_id LIKE ? OR a.asset_type LIKE ?)"; const qp = `%${q}%`; params.push(qp, qp); }
 
-  const assets = db.prepare(`
+  const assets = await db.prepare(`
     SELECT a.*, d.name as department_name
     FROM assets a LEFT JOIN departments d ON a.department_id = d.id
     ${where} ORDER BY a.created_at DESC LIMIT ? OFFSET ?
   `).all(...params, limit, offset);
 
-  const total = (db.prepare(`SELECT COUNT(*) as cnt FROM assets a ${where}`).get(...params) as any).cnt;
+  const total = (await db.prepare(`SELECT COUNT(*) as cnt FROM assets a ${where}`).get(...params) as any).cnt;
 
   return Response.json({ assets, total, page, limit });
 }

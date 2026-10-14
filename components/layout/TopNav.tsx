@@ -15,7 +15,7 @@ export function TopNav({ userName, role }: TopNavProps) {
   const [isPending, startTransition] = useTransition();
 
   return (
-    <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 shrink-0">
+    <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 shrink-0 print:hidden">
       <div />
       <div className="flex items-center gap-4">
         <button

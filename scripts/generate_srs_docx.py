@@ -79,7 +79,7 @@ def add_paragraph_with_inline(doc, text, style=None):
 
 
 def main():
-    with open("/Users/mebankhyriem/Desktop/asset-it/SRS.md", encoding="utf-8") as f:
+    with open("SRS.md", encoding="utf-8") as f:
         content = f.read()
 
     doc = Document()
@@ -204,7 +204,7 @@ def main():
         add_paragraph_with_inline(doc, stripped)
         i += 1
 
-    doc.save("/Users/mebankhyriem/Desktop/asset-it/SRS.docx")
+    doc.save("SRS.docx")
     print("SRS.docx generated successfully.")
 
 

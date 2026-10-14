@@ -7,7 +7,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   const { id } = await ctx.params;
   const db = getDb();
 
-  const approval = db.prepare(`
+  const approval = await db.prepare(`
     SELECT a.*, u.name as reviewer_name
     FROM approvals a LEFT JOIN users u ON a.reviewer_id = u.id
     WHERE a.id = ?

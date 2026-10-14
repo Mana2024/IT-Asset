@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, FileCheck, Camera } from "lucide-react";
 import { getCurrentUser } from "@/lib/dal";
 import { getDb } from "@/lib/db/client";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -15,7 +15,7 @@ export default async function RequestDetailPage(props: { params: Promise<{ id: s
   const user = await getCurrentUser();
   const db = getDb();
 
-  const request = db.prepare(`
+  const request = await db.prepare(`
     SELECT r.*,
            d.name as department_name,
            u.name as requested_by_name,
@@ -27,6 +27,7 @@ export default async function RequestDetailPage(props: { params: Promise<{ id: s
            aa.asset_id as allocated_asset_code,
            aa.asset_type as allocated_asset_type,
            aa.serial_number as allocated_serial,
+           aa.mac_address as allocated_mac_address,
            aa.end_of_life_date as asset_eol_date
     FROM requests r
     LEFT JOIN departments d ON r.department_id = d.id
@@ -38,10 +39,16 @@ export default async function RequestDetailPage(props: { params: Promise<{ id: s
 
   if (!request) notFound();
 
-  const approvals = db.prepare(`
+  const approvals = await db.prepare(`
     SELECT a.*, u.name as reviewer_name FROM approvals a
     LEFT JOIN users u ON a.reviewer_id = u.id WHERE a.request_id = ? ORDER BY a.created_at ASC
   `).all(parseInt(id)) as Approval[];
+
+  const items = await db.prepare(`
+    SELECT ri.*, a.asset_id as allocated_asset_code, a.serial_number as allocated_serial
+    FROM request_items ri LEFT JOIN assets a ON ri.allocated_asset_id = a.id
+    WHERE ri.request_id = ? ORDER BY ri.id ASC
+  `).all(parseInt(id)) as any[];
 
   const canCancel = user.id === request.requested_by && request.status === "Pending";
 
@@ -75,9 +82,10 @@ export default async function RequestDetailPage(props: { params: Promise<{ id: s
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-gray-900">Request Details</h3>
               {request.request_type === "External Issuance" && (
-                <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-medium rounded-full">
-                  External Issuance
-                </span>
+                <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-medium rounded-full">External Issuance</span>
+              )}
+              {request.request_type === "Transfer" && (
+                <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-medium rounded-full">Asset Transfer</span>
               )}
             </div>
 
@@ -103,7 +111,7 @@ export default async function RequestDetailPage(props: { params: Promise<{ id: s
               <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
                 {([
                   ["Employee Name", request.requester_name ?? request.requested_by_name],
-                  ["Employee ID", request.requester_employee_id ?? request.requested_by_empid ?? "—"],
+                  ["Office ID Number", request.requester_employee_id ?? request.requested_by_empid ?? "—"],
                   ["Email", request.requester_email ?? request.requested_by_email ?? "—"],
                   ["Designation", request.requester_designation ?? "—"],
                   ["Phone", request.requester_phone ?? "—"],
@@ -121,6 +129,26 @@ export default async function RequestDetailPage(props: { params: Promise<{ id: s
               </dl>
             )}
 
+            {items.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <p className="text-xs font-medium text-gray-500 mb-2">Requested Items</p>
+                <div className="space-y-1">
+                  {items.map((item, i) => (
+                    <div key={item.id} className="flex items-center justify-between text-sm bg-gray-50 rounded-lg px-3 py-2">
+                      <span className="text-gray-700">{i + 1}. {item.asset_type} × {item.quantity}</span>
+                      {item.allocated_asset_code ? (
+                        <span className="text-xs font-mono text-green-700 bg-green-50 px-2 py-0.5 rounded">
+                          {item.allocated_asset_code}{item.allocated_serial ? ` · ${item.allocated_serial}` : ""}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400">Pending</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="mt-4 pt-4 border-t border-gray-100">
               <p className="text-xs font-medium text-gray-500 mb-1">
                 {request.request_type === "External Issuance" ? "Purpose" : "Justification"}
@@ -130,7 +158,7 @@ export default async function RequestDetailPage(props: { params: Promise<{ id: s
           </div>
 
           {/* IM Initial Check info */}
-          {(request.tentative_asset_code || request.im_notes) && (
+          {(request.tentative_asset_code || request.im_notes || request.bypass_signed_file) && (
             <div className="bg-white rounded-xl border border-blue-100 shadow-sm p-5">
               <h3 className="font-semibold text-gray-900 mb-3">IM Initial Check</h3>
               {request.im_notes && (
@@ -148,13 +176,46 @@ export default async function RequestDetailPage(props: { params: Promise<{ id: s
                   </p>
                 </div>
               )}
+              {request.bypass_signed_file && ["INVENTORY_MANAGER", "JIO", "SIO"].includes(user.role) && (
+                <a
+                  href={`/api/requests/${request.id}/signed-document`}
+                  target="_blank"
+                  className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-200 text-green-700 text-xs font-medium rounded-lg hover:bg-green-100 transition-colors"
+                >
+                  <FileCheck className="h-3.5 w-3.5" /> View Signed Document (Bypass Approval)
+                </a>
+              )}
+            </div>
+          )}
+
+          {/* Defect photo evidence (Return/Repair/Condemnation) */}
+          {request.defect_photo && (user.id === request.requested_by || ["INVENTORY_MANAGER", "JIO", "SIO"].includes(user.role)) && (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+              <h3 className="font-semibold text-gray-900 mb-3">Photo Evidence</h3>
+              <a
+                href={`/api/requests/${request.id}/defect-photo`}
+                target="_blank"
+                className="inline-flex items-center gap-2 px-3 py-1.5 bg-gray-50 border border-gray-200 text-gray-700 text-xs font-medium rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                <Camera className="h-3.5 w-3.5" /> View Photo
+              </a>
             </div>
           )}
 
           {/* Final Issuance info */}
           {request.allocated_asset_code && (
             <div className="bg-white rounded-xl border border-green-100 shadow-sm p-5">
-              <h3 className="font-semibold text-gray-900 mb-3">Asset Issuance</h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-gray-900">Asset Issuance</h3>
+                {user.role === "INVENTORY_MANAGER" && (
+                  <Link
+                    href={`/assets/${request.allocated_asset_id}/edit`}
+                    className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                  >
+                    Edit
+                  </Link>
+                )}
+              </div>
               <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
                 <div>
                   <dt className="text-gray-500">Allocated Asset</dt>
@@ -170,6 +231,10 @@ export default async function RequestDetailPage(props: { params: Promise<{ id: s
                     <dd className="font-mono text-sm text-gray-900">{request.allocated_serial}</dd>
                   </div>
                 )}
+                <div>
+                  <dt className="text-gray-500">MAC Address</dt>
+                  <dd className="font-mono text-sm text-gray-900">{request.allocated_mac_address ?? "Not set"}</dd>
+                </div>
                 <div>
                   <dt className="text-gray-500">Issued To</dt>
                   <dd className="font-medium text-gray-900">

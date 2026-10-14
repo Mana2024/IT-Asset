@@ -26,7 +26,7 @@ export const verifySession = cache(async () => {
 export const getCurrentUser = cache(async (): Promise<AuthUser> => {
   const { userId } = await verifySession();
   const db = getDb();
-  const user = db
+  const user = await db
     .prepare(
       `SELECT u.id, u.employee_id, u.name, u.email, u.role, u.department_id,
               d.name as department_name

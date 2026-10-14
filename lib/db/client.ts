@@ -1,39 +1,61 @@
 import "server-only";
-import Database from "better-sqlite3";
-import { readFileSync } from "fs";
-import { join } from "path";
+import mysql, { type Pool, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 
-let db: Database.Database | null = null;
+let pool: Pool | null = null;
 
-export function getDb(): Database.Database {
-  if (!db) {
-    const dbPath = process.env.DATABASE_PATH ?? "./data/asset-it.db";
-    db = new Database(dbPath);
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-    const schema = readFileSync(join(process.cwd(), "lib/db/schema.sql"), "utf-8");
-    db.exec(schema);
-    seedIfEmpty(db);
+export function getPool(): Pool {
+  if (!pool) {
+    pool = mysql.createPool({
+      uri: process.env.DATABASE_URL,
+      waitForConnections: true,
+      connectionLimit: 10,
+      dateStrings: true,
+      decimalNumbers: true,
+    });
   }
-  return db;
+  return pool;
 }
 
-function seedIfEmpty(db: Database.Database) {
-  const userCount = (db.prepare("SELECT COUNT(*) as cnt FROM users").get() as { cnt: number }).cnt;
-  if (userCount > 0) return;
+type Executor = (sql: string, params: unknown[]) => Promise<[RowDataPacket[] | ResultSetHeader, unknown]>;
 
-  const bcrypt = require("bcryptjs");
+function makeExecutor(exec: Executor) {
+  return {
+    async get<T = any>(sql: string, ...params: unknown[]): Promise<T | undefined> {
+      const [rows] = await exec(sql, params);
+      return (rows as RowDataPacket[])[0] as T | undefined;
+    },
+    async all<T = any>(sql: string, ...params: unknown[]): Promise<T[]> {
+      const [rows] = await exec(sql, params);
+      return rows as T[];
+    },
+    async run(sql: string, ...params: unknown[]): Promise<ResultSetHeader> {
+      const [result] = await exec(sql, params);
+      return result as ResultSetHeader;
+    },
+  };
+}
 
-  db.prepare(`INSERT INTO departments (name) VALUES ('IT Department')`).run();
-  const deptId = (db.prepare("SELECT id FROM departments WHERE name = 'IT Department'").get() as { id: number }).id;
+export type DbHandle = ReturnType<typeof makeExecutor> & {
+  prepare(sql: string): {
+    get: (...params: unknown[]) => Promise<any>;
+    all: (...params: unknown[]) => Promise<any[]>;
+    run: (...params: unknown[]) => Promise<ResultSetHeader>;
+  };
+};
 
-  const insertUser = db.prepare(`
-    INSERT INTO users (employee_id, name, email, password_hash, role, department_id)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
+function wrapPrepare(base: ReturnType<typeof makeExecutor>): DbHandle {
+  return {
+    ...base,
+    prepare(sql: string) {
+      return {
+        get: (...params: unknown[]) => base.get(sql, ...params),
+        all: (...params: unknown[]) => base.all(sql, ...params),
+        run: (...params: unknown[]) => base.run(sql, ...params),
+      };
+    },
+  };
+}
 
-  insertUser.run("EMP-001", "System Admin", "admin@assetit.com", bcrypt.hashSync("admin123", 10), "INVENTORY_MANAGER", deptId);
-  insertUser.run("EMP-002", "Sarah Inspector", "sio@assetit.com", bcrypt.hashSync("password123", 10), "SIO", deptId);
-  insertUser.run("EMP-003", "David Director", "jio@assetit.com", bcrypt.hashSync("password123", 10), "JIO", deptId);
-  insertUser.run("EMP-004", "Alice User", "dept@assetit.com", bcrypt.hashSync("password123", 10), "DEPT_USER", deptId);
+export function getDb(): DbHandle {
+  return wrapPrepare(makeExecutor((sql, params) => getPool().query(sql, params)));
 }

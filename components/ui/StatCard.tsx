@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 
 interface StatCardProps {
@@ -6,6 +7,7 @@ interface StatCardProps {
   subtitle?: string;
   icon: LucideIcon;
   color?: "blue" | "green" | "yellow" | "red" | "purple" | "indigo";
+  href?: string;
 }
 
 const colorClasses = {
@@ -17,20 +19,33 @@ const colorClasses = {
   indigo: { bg: "bg-indigo-50", icon: "text-indigo-600", value: "text-indigo-700" },
 };
 
-export function StatCard({ title, value, subtitle, icon: Icon, color = "blue" }: StatCardProps) {
+export function StatCard({ title, value, subtitle, icon: Icon, color = "blue", href }: StatCardProps) {
   const colors = colorClasses[color];
+
+  const content = (
+    <div className="flex items-center justify-between">
+      <div>
+        <p className="text-sm font-medium text-gray-500">{title}</p>
+        <p className={`mt-1 text-3xl font-bold ${colors.value}`}>{value}</p>
+        {subtitle && <p className="mt-1 text-xs text-gray-400">{subtitle}</p>}
+      </div>
+      <div className={`${colors.bg} p-3 rounded-xl`}>
+        <Icon className={`h-6 w-6 ${colors.icon}`} />
+      </div>
+    </div>
+  );
+
+  if (href) {
+    return (
+      <Link href={href} className="block bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:border-blue-300 hover:shadow-md transition-all">
+        {content}
+      </Link>
+    );
+  }
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium text-gray-500">{title}</p>
-          <p className={`mt-1 text-3xl font-bold ${colors.value}`}>{value}</p>
-          {subtitle && <p className="mt-1 text-xs text-gray-400">{subtitle}</p>}
-        </div>
-        <div className={`${colors.bg} p-3 rounded-xl`}>
-          <Icon className={`h-6 w-6 ${colors.icon}`} />
-        </div>
-      </div>
+      {content}
     </div>
   );
 }

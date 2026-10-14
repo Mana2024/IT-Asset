@@ -5,8 +5,9 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Asset-IT | IT Asset Management System",
+  title: "IT-Asset | IT Asset Management System",
   description: "Centralized IT Asset Management with multi-level approval workflow",
+  icons: { icon: "/emblem.png" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
